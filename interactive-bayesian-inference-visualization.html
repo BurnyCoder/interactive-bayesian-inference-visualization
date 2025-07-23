@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Probability of Delivery</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom slider styles */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #3b82f6;
+            cursor: pointer;
+            border-radius: 50%;
+            margin-top: -6px;
+        }
+        input[type=range]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #3b82f6;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-5xl">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Probability and Babies</h1>
+            <p class="mt-2 text-lg text-slate-600">An Interactive Bayesian Inference Visualization</p>
+        </header>
+
+        <main class="bg-white p-6 rounded-2xl shadow-lg">
+            <div class="chart-container" style="position: relative; height:60vh; width:100%">
+                <canvas id="probabilityChart"></canvas>
+            </div>
+
+            <div class="controls mt-8 p-6 bg-slate-100 rounded-xl">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                    <div>
+                        <label for="todaySlider" class="block text-sm font-medium text-slate-700">Current Day of Pregnancy (<span class="font-bold text-blue-600" id="todayLabel">246</span>)</label>
+                        <p class="text-xs text-slate-500 mb-2">Adjust the slider to see how the probability changes as time passes without delivery.</p>
+                        <input id="todaySlider" type="range" min="220" max="310" value="246" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+                    <div class="text-center md:text-left p-4 border border-slate-200 rounded-lg bg-white">
+                        <h3 class="font-semibold text-slate-800">Most Likely Delivery Day (Posterior Peak)</h3>
+                        <p class="text-3xl font-bold text-blue-600" id="peakDay">266</p>
+                         <p class="text-sm text-slate-500" id="peakProb">P(Day) ≈ 2.49%</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- Core Logic from the provided image ---
+        const mu = 266; // Mean pregnancy length in days
+        const sigma = 16; // Standard deviation
+
+        // --- Chart Setup ---
+        const ctx = document.getElementById('probabilityChart').getContext('2d');
+        const slider = document.getElementById('todaySlider');
+        const todayLabel = document.getElementById('todayLabel');
+        const peakDayLabel = document.getElementById('peakDay');
+        const peakProbLabel = document.getElementById('peakProb');
+
+        let probabilityChart;
+
+        // --- Helper Functions ---
+        
+        /**
+         * Probability Density Function (PDF) for a normal distribution.
+         * @param {number} x - The value to evaluate.
+         * @param {number} mean - The mean of the distribution.
+         * @param {number} stdDev - The standard deviation of the distribution.
+         * @returns {number} The probability density at x.
+         */
+        function normalPdf(x, mean, stdDev) {
+            const variance = stdDev ** 2;
+            const exponent = -((x - mean) ** 2) / (2 * variance);
+            return (1 / (stdDev * Math.sqrt(2 * Math.PI))) * Math.exp(exponent);
+        }
+
+        /**
+         * Generates the data for the distributions.
+         * @param {number} today - The current day, before which delivery has not occurred.
+         * @returns {object} An object containing labels and datasets for the chart.
+         */
+        function generateDistributionData(today) {
+            const labels = [];
+            const priorData = [];
+            const posteriorData = [];
+            
+            // Generate data for a reasonable range around the mean
+            for (let day = mu - 4 * sigma; day <= mu + 4 * sigma; day++) {
+                labels.push(day);
+                
+                // Calculate prior probability for each day
+                const priorProb = normalPdf(day, mu, sigma);
+                priorData.push(priorProb);
+
+                // Likelihood: P(Data | Hypothesis)
+                // Data: "Baby not born before 'today'".
+                // Hypothesis: "Baby is born on 'day'".
+                // If 'day' < 'today', the likelihood is 0. Otherwise, it's 1.
+                const likelihood = (day < today) ? 0 : 1;
+                
+                // Unnormalized Posterior = Prior * Likelihood
+                posteriorData.push(priorProb * likelihood);
+            }
+
+            // Normalize the posterior distribution so the area under the curve sums to 1
+            const posteriorSum = posteriorData.reduce((acc, val) => acc + val, 0);
+            const normalizedPosteriorData = posteriorData.map(p => (posteriorSum > 0 ? p / posteriorSum : 0));
+
+            // Find the peak of the posterior distribution
+            const maxProb = Math.max(...normalizedPosteriorData);
+            const peakIndex = normalizedPosteriorData.indexOf(maxProb);
+            const peakDay = labels[peakIndex];
+
+            return {
+                labels,
+                priorData,
+                posteriorData: normalizedPosteriorData,
+                peakDay,
+                maxProb
+            };
+        }
+
+        /**
+         * Creates or updates the chart with new data.
+         * @param {object} data - The data generated by generateDistributionData.
+         */
+        function renderChart(data) {
+            const { labels, priorData, posteriorData, peakDay, maxProb } = data;
+
+            // Update peak day labels
+            peakDayLabel.textContent = peakDay;
+            peakProbLabel.textContent = `P(Day) ≈ ${(maxProb * 100).toFixed(2)}%`;
+
+
+            if (probabilityChart) {
+                // If chart exists, just update its data
+                probabilityChart.data.labels = labels;
+                probabilityChart.data.datasets[0].data = priorData;
+                probabilityChart.data.datasets[1].data = posteriorData;
+                probabilityChart.update();
+            } else {
+                // Create the chart for the first time
+                probabilityChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Prior Belief (Normal Distribution)',
+                                data: priorData,
+                                backgroundColor: 'rgba(148, 163, 184, 0.4)', // slate-400
+                                borderColor: 'rgba(100, 115, 135, 0.6)', // slate-500
+                                borderWidth: 1,
+                                barPercentage: 1.0,
+                                categoryPercentage: 1.0,
+                            },
+                            {
+                                label: 'Posterior Belief (Updated Probability)',
+                                data: posteriorData,
+                                backgroundColor: 'rgba(59, 130, 246, 0.6)', // blue-500
+                                borderColor: 'rgba(37, 99, 235, 0.8)', // blue-700
+                                borderWidth: 1,
+                                barPercentage: 1.0,
+                                categoryPercentage: 1.0,
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Probability Density'
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Day of Gestation'
+                                }
+                            }
+                        },
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Prior vs. Posterior Probability of Delivery Day',
+                                font: { size: 18 }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed.y !== null) {
+                                            label += (context.parsed.y * 100).toFixed(3) + '%';
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        },
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                    }
+                });
+            }
+        }
+
+        // --- Event Listener ---
+        slider.addEventListener('input', (event) => {
+            const today = parseInt(event.target.value);
+            todayLabel.textContent = today;
+            const newData = generateDistributionData(today);
+            renderChart(newData);
+        });
+
+        // --- Initial Load ---
+        function initialize() {
+            const initialToday = parseInt(slider.value);
+            todayLabel.textContent = initialToday;
+            const initialData = generateDistributionData(initialToday);
+            renderChart(initialData);
+        }
+
+        window.onload = initialize;
+    </script>
+</body>
+</html>
